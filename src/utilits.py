@@ -1,0 +1,132 @@
+import pandas as pd
+import numpy as np
+
+from constants import MAIN_DOMAIN, USER_COL, SESSION_GAP_MINUTES
+
+
+def filter_by_period(
+    df: pd.DataFrame,
+    year: int | None = None,
+    month: int | None = None,
+) -> pd.DataFrame:
+    """
+    Опциональный срез по году/месяцу.
+    Без параметров — возвращает df как есть.
+    """
+
+    if year is not None:
+        df = df[df['Время отчета'].dt.year == year]
+    if month is not None:
+        df = df[df['Время отчета'].dt.month == month]
+    return df
+
+
+def filter_by_domain(
+    df: pd.DataFrame,
+    domain: str | list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Опциональный срез по домену(ам).
+    Без параметра — возвращает df по домену "calc.saint-gobain.ru".
+    """
+    if domain is None:
+        return df
+    if isinstance(domain, str):
+        domain = [domain]
+    result = df[df['domain'].isin(domain)]
+    if result.empty:
+        print(
+            f'После фильтра по домену {domain} не осталось ни одной строки'
+        )
+    return result
+
+
+def add_identity_column(
+    df: pd.DataFrame,
+    main_domain: str = MAIN_DOMAIN
+) -> pd.DataFrame:
+    """
+    identity — единый ключ для подсчёта уникальных:
+    - на MAIN_DOMAIN, если логин указан -> логин (реальный человек)
+    - иначе (другой домен, или логин пуст даже на главном) -> Uuid (сессия)
+    identity_type — прозрачность: чем именно посчитано в этой строке
+    """
+    df = df.copy()
+    user = clean_empty(df[USER_COL])
+    is_main = df['domain'] == main_domain
+    has_user = is_main & user.notna()
+
+    df['identity'] = np.where(has_user, user, df['Uuid'])
+    df['identity_type'] = np.where(has_user, 'логин', 'uuid-сессия')
+    return df
+
+
+def add_session_id(
+    df: pd.DataFrame,
+    gap_minutes: int = SESSION_GAP_MINUTES
+) -> pd.DataFrame:
+    """
+    Группирует действия одного Uuid в сессии: разрыв больше gap_minutes
+    между соседними действиями начинает новую сессию.
+    Порог подобран по факту: 90-й перцентиль реальных пауз ~14 минут.
+
+    Ограничение: если пользователь возвращается на уже открытую
+    страницу спустя долгое время и сразу скачивает — новая сессия
+    может не содержать событие "Открыта страница" (единичные случаи,
+    не влияют на метрику существенно).
+    """
+    df = df.sort_values(['Uuid', 'Время отчета']).copy()
+    time_diff = df.groupby('Uuid')['Время отчета'].diff()
+    new_session = (
+        time_diff.isna()
+    ) | (time_diff > pd.Timedelta(minutes=gap_minutes))
+    df['session_num'] = new_session.groupby(df['Uuid']).cumsum()
+    df['session_id'] = df['Uuid'] + '_' + df['session_num'].astype(str)
+    return df
+
+
+def add_site_column(df: pd.DataFrame, site: str | None) -> pd.DataFrame:
+    """Добавляет колонку 'Сайт' первой, если site передан явно."""
+    if site is not None:
+        df = df.copy()
+        df.insert(0, 'Сайт', site)
+    return df
+
+
+def clean_empty(series: pd.Series) -> pd.Series:
+    """Пустая строка -> NaN, для унификации проверок на отсутствие значения."""
+    return series.replace('', pd.NA)
+
+
+def exclude_by_column(
+    df: pd.DataFrame,
+    column: str,
+    excluded: list[str],
+    label: str,
+    hint: str = '',
+) -> pd.DataFrame:
+    """
+    Убирает строки, где значение column входит в excluded,
+    с диагностикой в консоль.
+    """
+    before = len(df)
+    matched = df[column].isin(excluded).sum()
+    df_clean = df[~df[column].isin(excluded)].copy()
+
+    print(f'[{label}] Всего строк: {before}')
+    print(f'[{label}] Найдено совпадений с exclude-листом: {matched}')
+    print(f'[{label}] Осталось после фильтрации: {len(df_clean)}')
+
+    if matched == 0 and len(excluded) > 0:
+        print(
+            f'[{label}] Ни одного совпадения не найдено' + (
+                f' — {hint}' if hint else ''
+            )
+        )
+
+    return df_clean
+
+
+def filter_by_action(df: pd.DataFrame, action: str) -> pd.DataFrame:
+    """Строки с конкретным значением 'Действие'."""
+    return df[df['Действие'] == action]
