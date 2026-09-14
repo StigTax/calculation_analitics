@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import re
+
+from datetime import datetime
 
 from constants import (
     MAIN_DOMAIN,
@@ -167,7 +170,13 @@ def get_month_range(
         pd.Period(start_month, freq='M') if start_month
         else end_period - (months_back - 1)
     )
-    return [str(p) for p in pd.period_range(start_period, end_period, freq='M')]
+    return [
+        str(p) for p in pd.period_range(
+            start_period,
+            end_period,
+            freq='M'
+        )
+    ]
 
 
 def filter_by_month_list(df: pd.DataFrame, months: list[str]) -> pd.DataFrame:
@@ -175,3 +184,37 @@ def filter_by_month_list(df: pd.DataFrame, months: list[str]) -> pd.DataFrame:
     if not months:
         return df.iloc[0:0]
     return df[df['Время отчета'].dt.strftime('%Y-%m').isin(months)]
+
+
+def get_calculator_label(df: pd.DataFrame) -> str:
+    """
+    Название калькулятора для имени файла, из сырого df (до разбивки
+    по доменам). Если калькуляторов в файле несколько — предупреждает
+    в консоль и склеивает имена через '_' (по текущей структуре
+    выгрузок такого быть не должно, но на всякий случай не молчим).
+    """
+    calculators = df['Калькулятор'].unique()
+    if len(calculators) > 1:
+        print(
+            f'В файле несколько калькуляторов: {list(calculators)} — имя файла будет собирательным'
+        )
+
+    label = '_'.join(calculators)
+    # запрещённые в именах файлов Windows символы
+    label = re.sub(r'[\\/:*?"<>|]', '', label)
+    label = label.replace(' ', '_').replace('(', '').replace(')', '')
+    return label
+
+
+def build_output_filename(df: pd.DataFrame, prefix: str = 'report') -> str:
+    """
+    Имя файла: <prefix>_<калькулятор>_<период_данных>_<когда_сформирован>.xlsx
+    """
+    period_start = df['Время отчета'].min().strftime('%Y-%m')
+    period_end = df['Время отчета'].max().strftime('%Y-%m')
+    period = period_start if period_start == period_end else f'{period_start}_{period_end}'
+
+    calculator = get_calculator_label(df)
+    generated_at = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    return f'{prefix}_{calculator}_{period}_{generated_at}.xlsx'

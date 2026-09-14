@@ -27,6 +27,7 @@ from utilits import (
     filter_by_month_list,
 
 )
+from report import export_to_excel
 
 
 def top_downloaders(
@@ -237,81 +238,28 @@ def sessions_by_month_and_district(
 if __name__ == '__main__':
     df = load_clean_data()
 
+    # период для sessions-таблиц — единая точка выбора.
+    # Пока задаётся тут руками, при переходе на CLI сюда лягут
+    # значения из argparse (--months-back / --start-month / --end-month)
+    PERIOD_KWARGS = {'months_back': DEFAULT_MONTHS_RANGE}
+    # PERIOD_KWARGS = {'start_month': '2026-07', 'end_month': '2026-09'}  # так задаётся явный диапазон
+
     results = {}
     for label, domain in DOMAINS.items():
         df_domain = filter_by_domain(df, domain=domain)
         results[label] = {
-            'Топ-5 пользователей': top_downloaders(
-                df_domain,
-                site=label
+            'top': top_downloaders(
+                df_domain, site=label
             ) if domain == MAIN_DOMAIN else None,
-            'Количество скачиваний по округам': uniq_users_by_region(
-                df_domain,
-                site=label
+            'regions': uniq_users_by_region(df_domain, site=label),
+            'conversion': conversion_rate(df_domain, site=label),
+            'sessions_by_month': sessions_by_month(
+                df_domain, site=label, **PERIOD_KWARGS
             ),
-            'Конверсия': conversion_rate(df_domain, site=label),
-            'Сессии по месяцам': sessions_by_month(
-                df_domain,
-                site=label
-            ),
-            'Сессии по месяца за последние 3 месяца': sessions_by_month(
-                df_domain, site=label, months_back=3
-            ),
-            'Сессии по месяцам за период август-сентябрь': sessions_by_month(
-                df_domain,
-                site=label,
-                start_month='2026-08',
-                end_month='2026-09'
-            ),
-            'Сессий по округам по месяцым': sessions_by_month_and_district(
-                df_domain,
-                site=label
-            ),
-            'Сессии по округам по месяцым за последние 3 месяца': sessions_by_month_and_district(
-                df_domain, site=label, months_back=3
-            ),
-            'Сессии по округам по месяцым за период август-сентябрь': sessions_by_month_and_district(
-                df_domain,
-                site=label,
-                start_month='2026-08',
-                end_month='2026-09'
+            'sessions_by_month_district': sessions_by_month_and_district(
+                df_domain, site=label, **PERIOD_KWARGS
             ),
         }
 
     print_results(results)
-
-    df_calc = filter_by_domain(df, MAIN_DOMAIN)
-    sessions = add_session_id(df_calc)
-
-    with_visit = set(
-        sessions[sessions['Действие'] == ACTION_VISIT]['session_id']
-    )
-    all_sessions = set(sessions['session_id'])
-    no_visit = all_sessions - with_visit
-
-    if no_visit:
-        orphan_uuid = sessions[
-            sessions['session_id'].isin(no_visit)
-        ]['Uuid'].iloc[0]
-        print(
-            sessions[
-                sessions['Uuid'] == orphan_uuid
-            ][
-                [
-                    'Действие',
-                    'Время отчета',
-                    'session_id'
-                ]
-            ].sort_values('Время отчета')
-        )
-    else:
-        print('Сессий без захода не найдено')
-
-    print(f'Сессий без захода: {len(no_visit)} из {len(all_sessions)}')
-    print(f'Сессий с расчётом конверсии (заход+результат): {46}')
-    print(
-        f'Сессий "только скачивание" (без залогированного захода): {
-            len(no_visit)
-        }'
-    )
-    print(f'Итого сессий за период: {len(all_sessions)}')
+    export_to_excel(results, df)

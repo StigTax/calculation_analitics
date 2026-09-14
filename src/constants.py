@@ -1,3 +1,5 @@
+import re
+
 RAW_FILE = 'statistics (2).xlsx'
 EXCLUDED_USERS_FILE = 'config/excluded_users.csv'
 EXCLUDED_DOMAINS_FILE = 'config/excluded_domains.csv'
@@ -27,6 +29,9 @@ ACTIONS = [ACTION_VISIT, ACTION_DOWNLOAD]
 TOP_N = 5
 DEFAULT_MONTHS_RANGE = 6
 SESSION_GAP_MINUTES = 30
+MONTH_COL_RE = re.compile(r'^\d{4}-\d{2}$')
+CHART_HEIGHT_ROWS = 16
+GAP_ROWS = 2
 
 FEDERAL_DISTRICTS = {
     "Центральный федеральный округ": [
