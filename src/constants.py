@@ -1,4 +1,4 @@
-RAW_FILE = 'statistics (9).xlsx'
+RAW_FILE = 'statistics (2).xlsx'
 EXCLUDED_USERS_FILE = 'config/excluded_users.csv'
 EXCLUDED_DOMAINS_FILE = 'config/excluded_domains.csv'
 MAIN_DOMAIN = 'calc.saint-gobain.ru'
@@ -25,6 +25,7 @@ ACTION_DOWNLOAD = 'Пользователь скачал отчет'
 ACTIONS = [ACTION_VISIT, ACTION_DOWNLOAD]
 
 TOP_N = 5
+DEFAULT_MONTHS_RANGE = 6
 SESSION_GAP_MINUTES = 30
 
 FEDERAL_DISTRICTS = {

@@ -1,7 +1,12 @@
 import pandas as pd
 import numpy as np
 
-from constants import MAIN_DOMAIN, USER_COL, SESSION_GAP_MINUTES
+from constants import (
+    MAIN_DOMAIN,
+    USER_COL,
+    SESSION_GAP_MINUTES,
+    DEFAULT_MONTHS_RANGE
+)
 
 
 def filter_by_period(
@@ -130,3 +135,43 @@ def exclude_by_column(
 def filter_by_action(df: pd.DataFrame, action: str) -> pd.DataFrame:
     """Строки с конкретным значением 'Действие'."""
     return df[df['Действие'] == action]
+
+
+def add_month_column(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Добавляет колонку 'Месяц' в формате 'YYYY-MM' из 'Время отчета'."""
+    df = df.copy()
+    df['Месяц'] = df['Время отчета'].dt.strftime('%Y-%m')
+    return df
+
+
+def get_month_range(
+    df: pd.DataFrame,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    months_back: int = DEFAULT_MONTHS_RANGE,
+) -> list[str]:
+    """
+    Список месяцев ('YYYY-MM') для отчёта.
+    Без start_month/end_month — последние months_back месяцев, считая
+    от самого позднего месяца в данных. С явными границами — диапазон
+    между ними включительно (месяц можно не указывать с обеих сторон).
+    """
+    if df.empty:
+        return []
+
+    max_period = df['Время отчета'].max().to_period('M')
+    end_period = pd.Period(end_month, freq='M') if end_month else max_period
+    start_period = (
+        pd.Period(start_month, freq='M') if start_month
+        else end_period - (months_back - 1)
+    )
+    return [str(p) for p in pd.period_range(start_period, end_period, freq='M')]
+
+
+def filter_by_month_list(df: pd.DataFrame, months: list[str]) -> pd.DataFrame:
+    """Оставляет строки, чей месяц ('Время отчета') входит в months."""
+    if not months:
+        return df.iloc[0:0]
+    return df[df['Время отчета'].dt.strftime('%Y-%m').isin(months)]

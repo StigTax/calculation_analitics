@@ -8,11 +8,11 @@ from constants import (
     TOP_N,
     MAIN_DOMAIN,
     NOT_SPECIFIED,
-    ACTIONS,
     NOT_IN_DICT,
     DOMAINS,
     ACTION_VISIT,
     ACTION_DOWNLOAD,
+    DEFAULT_MONTHS_RANGE
 )
 from loader import load_clean_data
 from utilits import (
@@ -22,6 +22,10 @@ from utilits import (
     add_site_column,
     clean_empty,
     filter_by_action,
+    add_month_column,
+    get_month_range,
+    filter_by_month_list,
+
 )
 
 
@@ -84,33 +88,43 @@ def uniq_users_by_region(
     return add_site_column(result, site)
 
 
-def conversion_rate(
-    df: pd.DataFrame,
-    site: str | None = None,
-) -> pd.DataFrame:
+def conversion_rate(df: pd.DataFrame, site: str | None = None) -> pd.DataFrame:
     """
     Конверсия по сессиям: один визит (Uuid + временное окно 30 мин)
     считается один раз, вне зависимости от числа скачиваний внутри.
+
+    Знаменатель — сессии с зафиксированным заходом. 'Скачивание без
+    захода' — отдельная колонка: сессии, где есть скачивание, но нет
+    события захода (обычно повторный визит на уже открытую страницу),
+    не участвуют в проценте конверсии, чтобы его не завышать.
     """
     df = add_session_id(df)
-    pivot = (
-        df.groupby(['Калькулятор', 'Действие'])['session_id']
-        .nunique()
-        .unstack(fill_value=0)
-        .reindex(columns=ACTIONS, fill_value=0)
-    )
-    pivot['Конверсия, %'] = np.where(
-        pivot[ACTION_VISIT] > 0,
-        (
-            pivot[ACTION_DOWNLOAD]
-            / pivot[ACTION_VISIT]
-            * 100
-        ).round(1),
-        np.nan
-    )
-    result = pivot.reset_index()
 
-    return add_site_column(result, site)
+    result = []
+    for calc in df['Калькулятор'].unique():
+        calc_df = df[df['Калькулятор'] == calc]
+        visits = set(
+            calc_df[calc_df['Действие'] == ACTION_VISIT]['session_id']
+        )
+        downloads = set(
+            calc_df[calc_df['Действие'] == ACTION_DOWNLOAD]['session_id']
+        )
+
+        converted = visits & downloads
+        orphan = downloads - visits
+
+        result.append({
+            'Калькулятор': calc,
+            ACTION_VISIT: len(visits),
+            ACTION_DOWNLOAD: len(converted),
+            'Конверсия, %': round(
+                len(converted) / len(visits) * 100, 1
+            ) if visits else np.nan,
+            'Скачивание без захода': len(orphan),
+            'Всего сессий': len(visits | downloads),
+        })
+
+    return add_site_column(pd.DataFrame(result), site)
 
 
 def print_results(results: dict) -> None:
@@ -141,6 +155,85 @@ def print_results(results: dict) -> None:
                 ))
 
 
+def build_sessions(
+    df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Схлопывает df до одной строки на сессию (session_id): первое по
+    времени действие сессии определяет калькулятор, округ и месяц.
+    Основа для любой месячной/региональной статистики по числу сессий —
+    без риска задвоить одну сессию между несколькими группами.
+    """
+    df = add_session_id(df)
+    df = add_month_column(df)
+    df = df.copy()
+
+    df['Регион'] = clean_empty(df['Регион']).fillna(NOT_SPECIFIED)
+    df['Округ'] = df['Регион'].map(REGION_TO_DISTRICT)
+    df.loc[df['Регион'] == NOT_SPECIFIED, 'Округ'] = NOT_SPECIFIED
+
+    missing = df[df['Округ'].isna()]['Регион'].unique()
+    if len(missing) > 0:
+        print(f'Нет в справочнике округов: {list(missing)}')
+    df['Округ'] = df['Округ'].fillna(NOT_IN_DICT)
+
+    return (
+        df.sort_values('Время отчета')
+        .groupby('session_id')
+        .first()[['Калькулятор', 'Округ', 'Месяц']]
+        .reset_index()
+    )
+
+
+def sessions_by_month(
+    df: pd.DataFrame,
+    site: str | None = None,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    months_back: int = DEFAULT_MONTHS_RANGE,
+) -> pd.DataFrame:
+    """
+    Количество сессий по месяцам, в разрезе калькулятора.
+    По умолчанию — последние 6 месяцев от самого позднего месяца в
+    данных. Месяцы без единой сессии показываются нулём, а не
+    пропадают из таблицы.
+    """
+    months = get_month_range(df, start_month, end_month, months_back)
+    df = filter_by_month_list(df, months)
+    sessions = build_sessions(df)
+
+    result = (
+        sessions.groupby(['Калькулятор', 'Месяц'])
+        .size()
+        .unstack('Месяц', fill_value=0)
+        .reindex(columns=months, fill_value=0)
+        .reset_index()
+    )
+    return add_site_column(result, site)
+
+
+def sessions_by_month_and_district(
+    df: pd.DataFrame,
+    site: str | None = None,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    months_back: int = DEFAULT_MONTHS_RANGE,
+) -> pd.DataFrame:
+    """Аналогично sessions_by_month, но с разбивкой по федеральному округу."""
+    months = get_month_range(df, start_month, end_month, months_back)
+    df = filter_by_month_list(df, months)
+    sessions = build_sessions(df)
+
+    result = (
+        sessions.groupby(['Калькулятор', 'Округ', 'Месяц'])
+        .size()
+        .unstack('Месяц', fill_value=0)
+        .reindex(columns=months, fill_value=0)
+        .reset_index()
+    )
+    return add_site_column(result, site)
+
+
 if __name__ == '__main__':
     df = load_clean_data()
 
@@ -148,12 +241,77 @@ if __name__ == '__main__':
     for label, domain in DOMAINS.items():
         df_domain = filter_by_domain(df, domain=domain)
         results[label] = {
-            'top': top_downloaders(
+            'Топ-5 пользователей': top_downloaders(
                 df_domain,
                 site=label
             ) if domain == MAIN_DOMAIN else None,
-            'regions': uniq_users_by_region(df_domain, site=label),
-            'conversion': conversion_rate(df_domain, site=label),
+            'Количество скачиваний по округам': uniq_users_by_region(
+                df_domain,
+                site=label
+            ),
+            'Конверсия': conversion_rate(df_domain, site=label),
+            'Сессии по месяцам': sessions_by_month(
+                df_domain,
+                site=label
+            ),
+            'Сессии по месяца за последние 3 месяца': sessions_by_month(
+                df_domain, site=label, months_back=3
+            ),
+            'Сессии по месяцам за период август-сентябрь': sessions_by_month(
+                df_domain,
+                site=label,
+                start_month='2026-08',
+                end_month='2026-09'
+            ),
+            'Сессий по округам по месяцым': sessions_by_month_and_district(
+                df_domain,
+                site=label
+            ),
+            'Сессии по округам по месяцым за последние 3 месяца': sessions_by_month_and_district(
+                df_domain, site=label, months_back=3
+            ),
+            'Сессии по округам по месяцым за период август-сентябрь': sessions_by_month_and_district(
+                df_domain,
+                site=label,
+                start_month='2026-08',
+                end_month='2026-09'
+            ),
         }
 
     print_results(results)
+
+    df_calc = filter_by_domain(df, MAIN_DOMAIN)
+    sessions = add_session_id(df_calc)
+
+    with_visit = set(
+        sessions[sessions['Действие'] == ACTION_VISIT]['session_id']
+    )
+    all_sessions = set(sessions['session_id'])
+    no_visit = all_sessions - with_visit
+
+    if no_visit:
+        orphan_uuid = sessions[
+            sessions['session_id'].isin(no_visit)
+        ]['Uuid'].iloc[0]
+        print(
+            sessions[
+                sessions['Uuid'] == orphan_uuid
+            ][
+                [
+                    'Действие',
+                    'Время отчета',
+                    'session_id'
+                ]
+            ].sort_values('Время отчета')
+        )
+    else:
+        print('Сессий без захода не найдено')
+
+    print(f'Сессий без захода: {len(no_visit)} из {len(all_sessions)}')
+    print(f'Сессий с расчётом конверсии (заход+результат): {46}')
+    print(
+        f'Сессий "только скачивание" (без залогированного захода): {
+            len(no_visit)
+        }'
+    )
+    print(f'Итого сессий за период: {len(all_sessions)}')
