@@ -76,7 +76,7 @@ def load_raw_data(path: str) -> pd.DataFrame:
     )
 
     for col in NAME_COL:
-        df[col] = df[col].astype(str).str.strip()
+        df[col] = df[col].fillna('').astype(str).str.strip()
 
     df['domain'] = df[PAGE_COL].apply(get_domain)
 
