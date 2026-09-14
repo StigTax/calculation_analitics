@@ -8,8 +8,22 @@ from src.constants import (
     MAIN_DOMAIN,
     USER_COL,
     SESSION_GAP_MINUTES,
-    DEFAULT_MONTHS_RANGE
+    DEFAULT_MONTHS_RANGE,
+    TOP_PERIOD_DAYS
 )
+
+
+def _unique_calculators(df: pd.DataFrame, context: str) -> list[str]:
+    """
+    Уникальные калькуляторы в df, с предупреждением, если их больше одного.
+    """
+    calculators = list(df['Калькулятор'].unique())
+    if len(calculators) > 1:
+        print(
+            f'В файле несколько калькуляторов: {calculators} '
+            f'— {context} будет собирательным'
+        )
+    return calculators
 
 
 def filter_by_period(
@@ -188,20 +202,10 @@ def filter_by_month_list(df: pd.DataFrame, months: list[str]) -> pd.DataFrame:
 
 def get_calculator_label(df: pd.DataFrame) -> str:
     """
-    Название калькулятора для имени файла, из сырого df (до разбивки
-    по доменам). Если калькуляторов в файле несколько — предупреждает
-    в консоль и склеивает имена через '_' (по текущей структуре
-    выгрузок такого быть не должно, но на всякий случай не молчим).
+    Название калькулятора для имени файла (без запрещённых Windows-символов).
     """
-    calculators = df['Калькулятор'].unique()
-    if len(calculators) > 1:
-        print(
-            f'В файле несколько калькуляторов: {list(calculators)} '
-            '— имя файла будет собирательным'
-        )
-
+    calculators = _unique_calculators(df, 'имя файла')
     label = '_'.join(calculators)
-    # запрещённые в именах файлов Windows символы
     label = re.sub(r'[\\/:*?"<>|]', '', label)
     label = label.replace(' ', '_').replace('(', '').replace(')', '')
     return label
@@ -223,3 +227,37 @@ def build_output_filename(df: pd.DataFrame, prefix: str = 'report') -> str:
     generated_at = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     return f'{prefix}_{calculator}_{period}_{generated_at}.xlsx'
+
+
+def filter_by_date_range(
+    df: pd.DataFrame,
+    date_from: str | pd.Timestamp | None = None,
+    date_to: str | pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Срез по 'Время отчета' в границах [date_from, date_to] включительно."""
+    if date_from is not None:
+        df = df[df['Время отчета'] >= pd.Timestamp(date_from)]
+    if date_to is not None:
+        df = df[df['Время отчета'] <= pd.Timestamp(date_to)]
+    return df
+
+
+def get_last_n_days_range(
+    n: int = TOP_PERIOD_DAYS
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """
+    Границы 'последние n дней' от момента запуска отчёта (datetime.now()),
+    а не от последней даты в логе — иначе это не 'последние 30 дней',
+    а 'последний месяц из выгрузки', что не то же самое.
+    """
+    now = pd.Timestamp.now()
+    return now - pd.Timedelta(days=n), now
+
+
+def get_calculator_names(df: pd.DataFrame) -> str:
+    """
+    Человекочитаемое название калькулятора(ов) —
+    для заголовков таблиц и графиков.
+    """
+    calculators = _unique_calculators(df, 'заголовок')
+    return ', '.join(calculators)

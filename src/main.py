@@ -2,9 +2,20 @@
 import argparse
 import os
 
-from src.constants import DOMAINS, MAIN_DOMAIN, DEFAULT_MONTHS_RANGE
+from src.constants import (
+    DOMAINS,
+    MAIN_DOMAIN,
+    DEFAULT_MONTHS_RANGE,
+    TOP_PERIOD_DAYS
+)
 from src.loader import load_clean_data
-from src.utilits import filter_by_domain, filter_by_month_list, get_month_range
+from src.utilits import (
+    filter_by_domain,
+    filter_by_month_list,
+    get_month_range,
+    get_last_n_days_range,
+    get_calculator_names
+)
 from src.aggregate import (
     top_downloaders,
     uniq_users_by_region,
@@ -69,22 +80,29 @@ def main() -> None:
         print(f'Файл не найден: {args.input_file}')
         return
 
-    df = load_clean_data(args.input_file)
+    # df_full — без обрезки по месяцам. Нужен отдельно, потому что
+    # "топ за всё время" и "топ за последние 30 дней" не должны зависеть
+    # от --months-back/--period, которые управляют только sessions-таблицами.
+    df_full = load_clean_data(args.input_file)
+
+    if df_full.empty:
+        print('Файл загружен, но после exclude-фильтров не осталось строк.')
+        return
 
     if args.period:
         start_month, end_month = args.period
         months = get_month_range(
-            df,
+            df_full,
             start_month=start_month,
             end_month=end_month
         )
     else:
         months = get_month_range(
-            df,
+            df_full,
             months_back=args.months_back or DEFAULT_MONTHS_RANGE
         )
 
-    df = filter_by_month_list(df, months)
+    df = filter_by_month_list(df_full, months)
     if df.empty:
         print(
             f'После фильтра по периоду {months} не осталось '
@@ -92,13 +110,26 @@ def main() -> None:
         )
         return
 
+    # 30-дневное окно считается от момента запуска отчёта, а не от
+    # последней даты в логе — так что оно не зависит от --months-back/--period.
+    date_from, date_to = get_last_n_days_range(TOP_PERIOD_DAYS)
+
     results = {}
     for label, domain in DOMAINS.items():
+        df_domain_full = filter_by_domain(df_full, domain=domain)
         df_domain = filter_by_domain(df, domain=domain)
+
         results[label] = {
+            'calculator_name': get_calculator_names(df_domain_full),
             'top': top_downloaders(
-                df_domain,
+                df_domain_full,
                 site=label
+            ) if domain == MAIN_DOMAIN else None,
+            'top_30d': top_downloaders(
+                df_domain_full,
+                site=label,
+                date_from=date_from,
+                date_to=date_to,
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),

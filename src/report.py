@@ -14,6 +14,11 @@ from src.constants import (
 from src.utilits import build_output_filename
 
 
+def _with_calc(title: str, calc_name: str) -> str:
+    """Добавляет название калькулятора к заголовку, если оно есть."""
+    return f'{title} — {calc_name}' if calc_name else title
+
+
 def get_month_columns(df: pd.DataFrame) -> list[str]:
     """Колонки вида 'YYYY-MM' в df, в порядке следования."""
     return [c for c in df.columns if MONTH_COL_RE.match(str(c))]
@@ -70,7 +75,8 @@ def write_table_block(
     df,
     title,
     start_row,
-    chart_builder=None
+    chart_builder=None,
+    calc_name='',
 ) -> int:
     """
     Заголовок + таблица (+ график под ней, если передан chart_builder
@@ -91,7 +97,7 @@ def write_table_block(
 
     if chart_builder is not None:
         chart = chart_builder(workbook, worksheet.get_name(),
-                              df, header_row, data_start, data_end)
+                              df, header_row, data_start, data_end, calc_name)
         if chart is not None:
             chart_row = data_end + 2
             worksheet.insert_chart(chart_row, 0, chart)
@@ -116,7 +122,8 @@ def top_chart(
     df,
     header_row,
     data_start,
-    data_end
+    data_end,
+    calc_name='',
 ):
     # горизонтальные — читаемее для длинных логинов
     chart = workbook.add_chart({'type': 'bar'})
@@ -126,8 +133,14 @@ def top_chart(
         'categories': [sheet_name, data_start, name_col, data_end, name_col],
         'values': [sheet_name, data_start, value_col, data_end, value_col],
     })
-    chart.set_title({'name': 'Топ пользователей по скачиваниям'})
+    chart.set_title({
+        'name': _with_calc('Топ пользователей по скачиваниям', calc_name)
+    })
     chart.set_legend({'none': True})
+    # данные уже отсортированы по убыванию (сверху вниз в таблице),
+    # но Excel рисует bar-график категориями снизу вверх по умолчанию —
+    # разворачиваем ось, чтобы наибольшее значение было сверху
+    chart.set_y_axis({'reverse': True})
     return chart
 
 
@@ -137,7 +150,8 @@ def regions_chart(
     df,
     header_row,
     data_start,
-    data_end
+    data_end,
+    calc_name='',
 ):
     chart = workbook.add_chart({'type': 'bar'})
     name_col = df.columns.get_loc('Округ')
@@ -146,8 +160,11 @@ def regions_chart(
         'categories': [sheet_name, data_start, name_col, data_end, name_col],
         'values': [sheet_name, data_start, value_col, data_end, value_col],
     })
-    chart.set_title({'name': 'Активности по федеральным округам'})
+    chart.set_title({
+        'name': _with_calc('Активности по федеральным округам', calc_name)
+    })
     chart.set_legend({'none': True})
+    chart.set_y_axis({'reverse': True})
     return chart
 
 
@@ -157,7 +174,8 @@ def conversion_chart(
     df,
     header_row,
     data_start,
-    data_end
+    data_end,
+    calc_name='',
 ):
     chart = workbook.add_chart({'type': 'column'})
     calc_col = df.columns.get_loc('Калькулятор')
@@ -174,7 +192,7 @@ def conversion_chart(
             ],
             'values': [sheet_name, data_start, col, data_end, col],
         })
-    chart.set_title({'name': 'Заходы vs скачивания'})
+    chart.set_title({'name': _with_calc('Заходы vs скачивания', calc_name)})
     return chart
 
 
@@ -184,7 +202,8 @@ def sessions_by_month_chart(
     df,
     header_row,
     data_start,
-    data_end
+    data_end,
+    calc_name='',
 ):
     chart = workbook.add_chart({'type': 'line'})
     month_cols = get_month_columns(df)
@@ -204,7 +223,7 @@ def sessions_by_month_chart(
             ],
             'values': [sheet_name, row, first_col, row, last_col],
         })
-    chart.set_title({'name': 'Сессии по месяцам'})
+    chart.set_title({'name': _with_calc('Сессии по месяцам', calc_name)})
     chart.set_x_axis({'name': 'Месяц'})
     return chart
 
@@ -215,7 +234,8 @@ def sessions_district_chart(
     df,
     header_row,
     data_start,
-    data_end
+    data_end,
+    calc_name='',
 ):
     """
     Bar-график для 1-3 периодов — наглядное сравнение по округам.
@@ -243,7 +263,7 @@ def sessions_district_chart(
             'values': [sheet_name, data_start, col, data_end, col],
         })
 
-    chart.set_title({'name': 'Сессии по округам'})
+    chart.set_title({'name': _with_calc('Сессии по округам', calc_name)})
     chart.set_x_axis({'name': 'Количество сессий'})
     return chart
 
@@ -261,6 +281,7 @@ def apply_heatmap(worksheet, data_start, data_end, first_col, last_col):
 
 def export_site(workbook, site_label: str, tables: dict) -> None:
     worksheet = workbook.add_worksheet(site_label)
+    calc_name = tables.get('calculator_name', '')
     row = 0
 
     if tables.get('top') is not None:
@@ -268,39 +289,56 @@ def export_site(workbook, site_label: str, tables: dict) -> None:
             workbook,
             worksheet,
             tables['top'],
-            'Топ пользователей',
+            _with_calc('Топ пользователей', calc_name),
             row,
-            top_chart
+            top_chart,
+            calc_name,
+        )
+        row = write_table_block(
+            workbook,
+            worksheet,
+            tables['top_30d'],
+            _with_calc('Топ-5 за последние 30 дней', calc_name),
+            row,
+            top_chart,
+            calc_name,
         )
 
     row = write_table_block(
         workbook,
         worksheet,
         tables['regions'],
-        'Активности по региону',
+        _with_calc('Активности по региону', calc_name),
         row,
-        regions_chart
+        regions_chart,
+        calc_name,
     )
     row = write_table_block(
         workbook,
         worksheet,
         tables['conversion'],
-        'Конверсия',
+        _with_calc('Конверсия', calc_name),
         row,
-        conversion_chart
+        conversion_chart,
+        calc_name,
     )
     row = write_table_block(
         workbook,
         worksheet,
         tables['sessions_by_month'],
-        'Сессии по месяцам',
+        _with_calc('Сессии по месяцам', calc_name),
         row,
-        sessions_by_month_chart
+        sessions_by_month_chart,
+        calc_name,
     )
     write_table_block(
-        workbook, worksheet, tables['sessions_by_month_district'],
-        'Сессии по месяцам и округам', row,
-        chart_builder=sessions_district_chart  # было: chart_builder=None
+        workbook,
+        worksheet,
+        tables['sessions_by_month_district'],
+        _with_calc('Сессии по месяцам и округам', calc_name),
+        row,
+        sessions_district_chart,
+        calc_name,
     )
 
 

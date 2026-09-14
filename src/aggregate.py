@@ -12,7 +12,8 @@ from src.constants import (
     DOMAINS,
     ACTION_VISIT,
     ACTION_DOWNLOAD,
-    DEFAULT_MONTHS_RANGE
+    DEFAULT_MONTHS_RANGE,
+    TOP_PERIOD_DAYS
 )
 from src.loader import load_clean_data
 from src.utilits import (
@@ -24,7 +25,10 @@ from src.utilits import (
     filter_by_action,
     add_month_column,
     get_month_range,
+    filter_by_date_range,
+    get_last_n_days_range,
     filter_by_month_list,
+    get_calculator_names,
 
 )
 from src.report import export_to_excel
@@ -34,8 +38,17 @@ def top_downloaders(
     df: pd.DataFrame,
     top_n: int = TOP_N,
     site: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> pd.DataFrame:
-    """Топ-N пользователей по количеству скачанных отчётов."""
+    """
+    Топ-N пользователей по количеству скачанных отчётов.
+    Без date_from/date_to — за весь переданный df (топ за всё время).
+    С ними — только за произвольный период (не обязательно календарный
+    месяц, например 15.08-15.09).
+    """
+    df = filter_by_date_range(df, date_from, date_to)
+
     main_df = filter_by_domain(df, MAIN_DOMAIN)
     downloads = filter_by_action(main_df, ACTION_DOWNLOAD)
     valid_user = clean_empty(downloads[USER_COL]).notna()
@@ -43,12 +56,13 @@ def top_downloaders(
 
     top_users = downloads.groupby(USER_COL).size().sort_values(
         ascending=False
-    ).head(
-        top_n
-    ).reset_index(name='Количество скачиваний')
+    ).head(top_n).reset_index(name='Количество скачиваний')
+
+    period_label = f' за {date_from}—{date_to}' if date_from or date_to else ''
     if top_users.empty:
         print(
-            'Данная выборка не нашла пользователей для формирования TOP листа'
+            'Данная выборка не нашла пользователей для '
+            f'формирования TOP листа{period_label}'
         )
 
     return add_site_column(top_users, site)
@@ -141,6 +155,8 @@ def print_results(results: dict) -> None:
         print('=' * 60)
 
         for name, df in tables.items():
+            if name == 'calculator_name':
+                continue
             print(f'\n--- {name} ---')
             if df is None:
                 print('(не считается для этого сайта)')
@@ -238,27 +254,32 @@ def sessions_by_month_and_district(
 if __name__ == '__main__':
     df = load_clean_data()
 
-    # период для sessions-таблиц — единая точка выбора.
-    # Пока задаётся тут руками, при переходе на CLI сюда лягут
-    # значения из argparse (--months-back / --start-month / --end-month)
     PERIOD_KWARGS = {'months_back': DEFAULT_MONTHS_RANGE}
-    # PERIOD_KWARGS = {'start_month': '2026-07', 'end_month': '2026-09'}
-    # # так задаётся явный диапазон
+    date_from, date_to = get_last_n_days_range(TOP_PERIOD_DAYS)
 
     results = {}
     for label, domain in DOMAINS.items():
         df_domain = filter_by_domain(df, domain=domain)
         results[label] = {
+            'calculator_name': get_calculator_names(df_domain),
             'top': top_downloaders(
                 df_domain, site=label
+            ) if domain == MAIN_DOMAIN else None,
+            'top_30d': top_downloaders(
+                df_domain, site=label,
+                date_from=date_from, date_to=date_to,
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),
             'sessions_by_month': sessions_by_month(
-                df_domain, site=label, **PERIOD_KWARGS
+                df_domain,
+                site=label,
+                **PERIOD_KWARGS
             ),
             'sessions_by_month_district': sessions_by_month_and_district(
-                df_domain, site=label, **PERIOD_KWARGS
+                df_domain,
+                site=label,
+                **PERIOD_KWARGS
             ),
         }
 
