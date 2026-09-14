@@ -27,7 +27,7 @@ ACTION_DOWNLOAD = 'Пользователь скачал отчет'
 ACTIONS = [ACTION_VISIT, ACTION_DOWNLOAD]
 
 TOP_N = 5
-DEFAULT_MONTHS_RANGE = 6
+DEFAULT_MONTHS_RANGE = 7
 SESSION_GAP_MINUTES = 30
 MONTH_COL_RE = re.compile(r'^\d{4}-\d{2}$')
 CHART_HEIGHT_ROWS = 16
@@ -82,7 +82,7 @@ FEDERAL_DISTRICTS = {
         "Республика Ингушетия",
         "Кабардино-Балкарская Республика",
         "Карачаево-Черкесская Республика",
-        "Республика Северная Осетия — Алания",
+        "Республика Северная Осетия - Алания",
         "Чеченская Республика",
         "Ставропольский край"
     ],

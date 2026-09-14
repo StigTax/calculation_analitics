@@ -4,7 +4,7 @@ import re
 
 from datetime import datetime
 
-from constants import (
+from src.constants import (
     MAIN_DOMAIN,
     USER_COL,
     SESSION_GAP_MINUTES,
@@ -196,7 +196,8 @@ def get_calculator_label(df: pd.DataFrame) -> str:
     calculators = df['Калькулятор'].unique()
     if len(calculators) > 1:
         print(
-            f'В файле несколько калькуляторов: {list(calculators)} — имя файла будет собирательным'
+            f'В файле несколько калькуляторов: {list(calculators)} '
+            '— имя файла будет собирательным'
         )
 
     label = '_'.join(calculators)
@@ -212,7 +213,11 @@ def build_output_filename(df: pd.DataFrame, prefix: str = 'report') -> str:
     """
     period_start = df['Время отчета'].min().strftime('%Y-%m')
     period_end = df['Время отчета'].max().strftime('%Y-%m')
-    period = period_start if period_start == period_end else f'{period_start}_{period_end}'
+    period = (
+        period_start
+        if period_start == period_end
+        else f'{period_start}_{period_end}'
+    )
 
     calculator = get_calculator_label(df)
     generated_at = datetime.now().strftime('%Y%m%d_%H%M%S')

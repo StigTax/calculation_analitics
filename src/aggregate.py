@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from tabulate import tabulate
 
-from constants import (
+from src.constants import (
     REGION_TO_DISTRICT,
     USER_COL,
     TOP_N,
@@ -14,8 +14,8 @@ from constants import (
     ACTION_DOWNLOAD,
     DEFAULT_MONTHS_RANGE
 )
-from loader import load_clean_data
-from utilits import (
+from src.loader import load_clean_data
+from src.utilits import (
     filter_by_domain,
     add_identity_column,
     add_session_id,
@@ -27,7 +27,7 @@ from utilits import (
     filter_by_month_list,
 
 )
-from report import export_to_excel
+from src.report import export_to_excel
 
 
 def top_downloaders(
@@ -242,7 +242,8 @@ if __name__ == '__main__':
     # Пока задаётся тут руками, при переходе на CLI сюда лягут
     # значения из argparse (--months-back / --start-month / --end-month)
     PERIOD_KWARGS = {'months_back': DEFAULT_MONTHS_RANGE}
-    # PERIOD_KWARGS = {'start_month': '2026-07', 'end_month': '2026-09'}  # так задаётся явный диапазон
+    # PERIOD_KWARGS = {'start_month': '2026-07', 'end_month': '2026-09'}
+    # # так задаётся явный диапазон
 
     results = {}
     for label, domain in DOMAINS.items():

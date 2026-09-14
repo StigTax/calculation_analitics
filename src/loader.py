@@ -1,7 +1,7 @@
 import pandas as pd
 from urllib.parse import urlparse
 
-from constants import (
+from src.constants import (
     EXCLUDED_USERS_FILE,
     EXCLUDED_DOMAINS_FILE,
     RAW_FILE,
@@ -10,7 +10,7 @@ from constants import (
     USER_COL,
 )
 
-from utilits import exclude_by_column
+from src.utilits import exclude_by_column
 
 
 def load_excluded_users(path: str) -> list[str]:

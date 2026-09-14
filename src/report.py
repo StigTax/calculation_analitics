@@ -3,7 +3,7 @@ import pandas as pd
 
 import os
 
-from constants import (
+from src.constants import (
     ACTION_VISIT,
     ACTION_DOWNLOAD,
     USER_COL,
@@ -11,7 +11,7 @@ from constants import (
     CHART_HEIGHT_ROWS,
     GAP_ROWS,
 )
-from utilits import build_output_filename
+from src.utilits import build_output_filename
 
 
 def get_month_columns(df: pd.DataFrame) -> list[str]:
@@ -19,7 +19,12 @@ def get_month_columns(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if MONTH_COL_RE.match(str(c))]
 
 
-def write_df(worksheet, workbook, df: pd.DataFrame, start_row: int) -> tuple[int, int]:
+def write_df(
+    worksheet,
+    workbook,
+    df: pd.DataFrame,
+    start_row: int
+) -> tuple[int, int]:
     """
     Пишет df на worksheet начиная со start_row (строка заголовков).
     Возвращает (data_start_row, data_end_row) для построения графика.
@@ -59,7 +64,14 @@ def write_df(worksheet, workbook, df: pd.DataFrame, start_row: int) -> tuple[int
     return data_start, data_end
 
 
-def write_table_block(workbook, worksheet, df, title, start_row, chart_builder=None) -> int:
+def write_table_block(
+    workbook,
+    worksheet,
+    df,
+    title,
+    start_row,
+    chart_builder=None
+) -> int:
     """
     Заголовок + таблица (+ график под ней, если передан chart_builder
     и он вернул объект графика; если chart_builder вернул None — вместо
@@ -98,7 +110,14 @@ def write_table_block(workbook, worksheet, df, title, start_row, chart_builder=N
 
 # --- построители графиков под конкретные таблицы ---
 
-def top_chart(workbook, sheet_name, df, header_row, data_start, data_end):
+def top_chart(
+    workbook,
+    sheet_name,
+    df,
+    header_row,
+    data_start,
+    data_end
+):
     # горизонтальные — читаемее для длинных логинов
     chart = workbook.add_chart({'type': 'bar'})
     name_col = df.columns.get_loc(USER_COL)
@@ -112,7 +131,14 @@ def top_chart(workbook, sheet_name, df, header_row, data_start, data_end):
     return chart
 
 
-def regions_chart(workbook, sheet_name, df, header_row, data_start, data_end):
+def regions_chart(
+    workbook,
+    sheet_name,
+    df,
+    header_row,
+    data_start,
+    data_end
+):
     chart = workbook.add_chart({'type': 'bar'})
     name_col = df.columns.get_loc('Округ')
     value_col = df.columns.get_loc('Уникальных активностей по региону')
@@ -183,7 +209,14 @@ def sessions_by_month_chart(
     return chart
 
 
-def sessions_district_chart(workbook, sheet_name, df, header_row, data_start, data_end):
+def sessions_district_chart(
+    workbook,
+    sheet_name,
+    df,
+    header_row,
+    data_start,
+    data_end
+):
     """
     Bar-график для 1-3 периодов — наглядное сравнение по округам.
     Для 4+ месяцев возвращает None: report будет строить по этой
@@ -200,7 +233,13 @@ def sessions_district_chart(workbook, sheet_name, df, header_row, data_start, da
         col = df.columns.get_loc(month)
         chart.add_series({
             'name': month,
-            'categories': [sheet_name, data_start, district_col, data_end, district_col],
+            'categories': [
+                sheet_name,
+                data_start,
+                district_col,
+                data_end,
+                district_col
+            ],
             'values': [sheet_name, data_start, col, data_end, col],
         })
 
@@ -210,7 +249,10 @@ def sessions_district_chart(workbook, sheet_name, df, header_row, data_start, da
 
 
 def apply_heatmap(worksheet, data_start, data_end, first_col, last_col):
-    """Цветовая шкала на диапазон месячных колонок — альтернатива графику при 4+ периодах."""
+    """
+    Цветовая шкала на диапазон месячных колонок — альтернатива
+    графику при 4+ периодах.
+    """
     worksheet.conditional_format(
         data_start, first_col, data_end, last_col,
         {'type': '3_color_scale'}
@@ -223,14 +265,38 @@ def export_site(workbook, site_label: str, tables: dict) -> None:
 
     if tables.get('top') is not None:
         row = write_table_block(
-            workbook, worksheet, tables['top'], 'Топ пользователей', row, top_chart)
+            workbook,
+            worksheet,
+            tables['top'],
+            'Топ пользователей',
+            row,
+            top_chart
+        )
 
     row = write_table_block(
-        workbook, worksheet, tables['regions'], 'Активности по региону', row, regions_chart)
+        workbook,
+        worksheet,
+        tables['regions'],
+        'Активности по региону',
+        row,
+        regions_chart
+    )
     row = write_table_block(
-        workbook, worksheet, tables['conversion'], 'Конверсия', row, conversion_chart)
+        workbook,
+        worksheet,
+        tables['conversion'],
+        'Конверсия',
+        row,
+        conversion_chart
+    )
     row = write_table_block(
-        workbook, worksheet, tables['sessions_by_month'], 'Сессии по месяцам', row, sessions_by_month_chart)
+        workbook,
+        worksheet,
+        tables['sessions_by_month'],
+        'Сессии по месяцам',
+        row,
+        sessions_by_month_chart
+    )
     write_table_block(
         workbook, worksheet, tables['sessions_by_month_district'],
         'Сессии по месяцам и округам', row,
