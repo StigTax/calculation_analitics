@@ -29,6 +29,8 @@ from src.utilits import (
     get_last_n_days_range,
     filter_by_month_list,
     get_calculator_names,
+    _add_readable_site_to_calculator,
+    get_month_columns,
 
 )
 from src.report import export_to_excel
@@ -142,7 +144,113 @@ def conversion_rate(df: pd.DataFrame, site: str | None = None) -> pd.DataFrame:
     return add_site_column(pd.DataFrame(result), site)
 
 
-def print_results(results: dict) -> None:
+def calculator_downloads(
+    df: pd.DataFrame,
+    site: str | None = None
+) -> pd.DataFrame:
+    """
+    Количество скачиваний отчёта по калькулятору — сырые события
+    ACTION_DOWNLOAD (.size()), без привязки к сессиям. Другая единица,
+    чем у конверсии (там считаются сессии): пользователь, скачавший
+    5 раз за визит, даёт здесь 5, а не 1.
+
+    Считается только ради сборки на листе 'Сравнение'
+    (см. downloads_by_calculator) — на per-site листах пока не
+    выводится (помесячная версия этой же метрики — отдельный пункт
+    ToDo, п.2, ещё не сделан).
+    """
+    downloads = filter_by_action(df, ACTION_DOWNLOAD)
+    result = (
+        downloads.groupby('Калькулятор')
+        .size()
+        .reset_index(name='Количество скачиваний')
+    )
+    return add_site_column(result, site)
+
+
+def downloads_by_calculator(results: dict) -> pd.DataFrame:
+    """
+    Количество скачиваний по калькулятору, в разбивке по сайтам.
+    В отличие от conversion_by_calculator — не сборка уже
+    существовавшей таблицы (calculator_downloads считается впервые
+    именно под этот отчёт), но механика сборки (concat + сортировка +
+    человекочитаемые имена) та же самая.
+    """
+    tables = [
+        site_tables['calculator_downloads']
+        for site_tables in results.values()
+        if site_tables.get('calculator_downloads') is not None
+        and not site_tables['calculator_downloads'].empty
+    ]
+    if not tables:
+        return pd.DataFrame()
+
+    combined = (
+        pd.concat(tables, ignore_index=True)
+        .sort_values(['Калькулятор', 'Сайт'])
+        .reset_index(drop=True)
+    )
+    return _add_readable_site_to_calculator(combined)
+
+
+def conversion_by_calculator(results: dict) -> pd.DataFrame:
+    """
+    Конверсия по калькулятору, в разбивке по сайтам. Сборка, не новый
+    подсчёт: конверсия методологически одна и та же для всех сайтов
+    (сессии) — просто склеиваем уже посчитанные per-site таблицы
+    conversion_rate и сортируем по калькулятору, чтобы сайты одного
+    калькулятора шли рядом.
+    """
+    tables = [
+        site_tables['conversion']
+        for site_tables in results.values()
+        if site_tables.get('conversion') is not None
+        and not site_tables['conversion'].empty
+    ]
+    if not tables:
+        return pd.DataFrame()
+
+    combined = (
+        pd.concat(tables, ignore_index=True)
+        .sort_values(['Калькулятор', 'Сайт'])
+        .reset_index(drop=True)
+    )
+    return _add_readable_site_to_calculator(combined)
+
+
+def sessions_by_calculator_by_month(results: dict) -> pd.DataFrame:
+    """
+    Сессии по месяцам, в разбивке по калькулятору и сайту. Сборка:
+    склеивает уже посчитанные per-site таблицы sessions_by_month (не
+    conversion_rate — там нет месяцев, только итог за весь период).
+
+    Осторожно: у разных сайтов может быть разный диапазон месяцев
+    (get_month_range считается отдельно для каждого домена). После
+    concat месяц вне диапазона сайта — NaN ('период не считался'),
+    а не 0 ('сессий не было') — это разные вещи, не путать при чтении.
+    """
+    tables = [
+        site_tables['sessions_by_month']
+        for site_tables in results.values()
+        if site_tables.get('sessions_by_month') is not None
+        and not site_tables['sessions_by_month'].empty
+    ]
+    if not tables:
+        return pd.DataFrame()
+
+    combined = pd.concat(tables, ignore_index=True, sort=False)
+    month_cols = sorted(get_month_columns(combined))
+    other_cols = [c for c in combined.columns if c not in month_cols]
+
+    combined = (
+        combined[other_cols + month_cols]
+        .sort_values(['Калькулятор', 'Сайт'])
+        .reset_index(drop=True)
+    )
+    return _add_readable_site_to_calculator(combined)
+
+
+def print_results(results: dict, comparison: dict | None = None) -> None:
     """
     Печатает results (словарь {сайт: {'top'/'regions'/'conversion': df}})
     в консоль через tabulate — по сайту заголовок, по каждой таблице
@@ -170,6 +278,28 @@ def print_results(results: dict) -> None:
                     showindex=False,
                     floatfmt='.1f',
                 ))
+
+    if not comparison:
+        return
+
+    print(f'\n{"=" * 60}')
+    print('СРАВНЕНИЕ (по сайтам)')
+    print('=' * 60)
+
+    for name, df in comparison.items():
+        if name == 'calculator_name':
+            continue
+        print(f'\n--- {name} ---')
+        if df is None or df.empty:
+            print('(пусто)')
+        else:
+            print(tabulate(
+                df,
+                headers='keys',
+                tablefmt='rounded_outline',
+                showindex=False,
+                floatfmt='.1f',
+            ))
 
 
 def build_sessions(
@@ -271,6 +401,10 @@ if __name__ == '__main__':
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),
+            'calculator_downloads': calculator_downloads(
+                df_domain,
+                site=label
+            ),
             'sessions_by_month': sessions_by_month(
                 df_domain,
                 site=label,
@@ -282,6 +416,18 @@ if __name__ == '__main__':
                 **PERIOD_KWARGS
             ),
         }
+    comparison = {
+        'calculator_name': results.get(
+            'calc',
+            {}
+        ).get(
+            'calculator_name',
+            ''
+        ),
+        'conversion_by_calc': conversion_by_calculator(results),
+        'sessions_by_calc_month': sessions_by_calculator_by_month(results),
+        'downloads_by_calc': downloads_by_calculator(results),
+    }
 
-    print_results(results)
-    export_to_excel(results, df)
+    print_results(results, comparison)
+    export_to_excel(results, df, comparison=comparison)

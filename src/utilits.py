@@ -9,7 +9,10 @@ from src.constants import (
     USER_COL,
     SESSION_GAP_MINUTES,
     DEFAULT_MONTHS_RANGE,
-    TOP_PERIOD_DAYS
+    TOP_PERIOD_DAYS,
+    SITE_LABELS,
+    CALCULATOR_DISPLAY_OVERRIDES,
+    MONTH_COL_RE,
 )
 
 
@@ -260,4 +263,93 @@ def get_calculator_names(df: pd.DataFrame) -> str:
     для заголовков таблиц и графиков.
     """
     calculators = _unique_calculators(df, 'заголовок')
-    return ', '.join(calculators)
+    display = [get_calculator_display_name(c) for c in calculators]
+    return ', '.join(display)
+
+
+def _merge_calculator_and_site(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Заменяет служебный ключ сайта в 'Сайт' человекочитаемым (SITE_LABELS)
+    и приклеивает к названию калькулятора одной строкой. Отдельная
+    колонка 'Сайт' с сырым ключом в кросс-сайтовых таблицах избыточна
+    и нечитаема для итогового отчёта — здесь она схлопывается.
+    """
+    df = df.copy()
+    site_label = df['Сайт'].map(SITE_LABELS)
+
+    missing = df.loc[site_label.isna(), 'Сайт'].unique()
+    if len(missing) > 0:
+        print(f'Нет человекочитаемого названия в SITE_LABELS: {list(missing)}')
+
+    df['Калькулятор'] = df['Калькулятор'] + ' — ' + site_label.fillna(
+        df['Сайт']
+    )
+    return df.drop(columns='Сайт')
+
+
+def _add_readable_site_to_calculator(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Приклеивает к названию калькулятора человекочитаемый сайт (SITE_LABELS)
+    и применяет override неоднозначных названий калькулятора
+    (CALCULATOR_DISPLAY_OVERRIDES) — например, 'СФТК' без уточнения
+    превращается в 'СФТК (Розничный)', чтобы не путать с 'СФТК
+    (Проектный)'. Колонка 'Сайт' со служебным ключом остаётся нетронутой.
+    """
+    df = df.copy()
+    site_label = df['Сайт'].map(SITE_LABELS)
+
+    missing = df.loc[site_label.isna(), 'Сайт'].unique()
+    if len(missing) > 0:
+        print(f'Нет человекочитаемого названия в SITE_LABELS: {list(missing)}')
+
+    calc_display = df['Калькулятор'].map(get_calculator_display_name)
+    df['Калькулятор'] = calc_display + ' — ' + site_label.fillna(df['Сайт'])
+    return df
+
+
+def get_calculator_display_name(raw_name: str) -> str:
+    """
+    Человекочитаемое название калькулятора для заголовков и графиков.
+    Сейчас единственное исключение — 'Калькулятор СФТК' само по себе
+    неоднозначно: в выгрузках существует отдельный 'Калькулятор СФТК
+    (Проектный)', так что базовое имя дополняется словом '(Розничный)',
+    чтобы не путать эти два калькулятора при просмотре отчёта отдельно
+    от файла-источника.
+    """
+    return CALCULATOR_DISPLAY_OVERRIDES.get(raw_name, raw_name)
+
+
+def get_report_date(df: pd.DataFrame) -> str:
+    """
+    Дата самой свежей записи в логе, в формате дд.мм.гггг — для
+    заголовков таблиц/графиков ('от ...'). Отдельная сущность от
+    generated_at в имени файла (build_output_filename) — то момент
+    запуска скрипта, это момент последних данных, они могут не совпадать.
+    """
+    return df['Время отчета'].max().strftime('%d.%m.%Y')
+
+
+def _with_calc(
+    title: str,
+    calc_name: str = '',
+    site_label: str = '',
+    report_date: str = '',
+) -> str:
+    """
+    Достраивает заголовок: '{title} - {calc_name} - {site_label} -
+    от {report_date}'. Каждый хвост добавляется только если аргумент
+    не пустой — так сравнительные таблицы (без привязки к одному сайту)
+    получают заголовок без site_label, но с датой.
+    """
+    parts = [p for p in (calc_name, site_label) if p]
+    result = title
+    if parts:
+        result += ' - ' + ' - '.join(parts)
+    if report_date:
+        result += f' - от {report_date}'
+    return result
+
+
+def get_month_columns(df: pd.DataFrame) -> list[str]:
+    """Колонки вида 'YYYY-MM' в df, в порядке следования."""
+    return [c for c in df.columns if MONTH_COL_RE.match(str(c))]

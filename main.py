@@ -22,6 +22,10 @@ from src.aggregate import (
     conversion_rate,
     sessions_by_month,
     sessions_by_month_and_district,
+    conversion_by_calculator,
+    sessions_by_calculator_by_month,
+    calculator_downloads,
+    downloads_by_calculator,
 )
 from src.report import export_to_excel
 
@@ -133,6 +137,10 @@ def main() -> None:
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),
+            'calculator_downloads': calculator_downloads(
+                df_domain,
+                site=label
+            ),
             'sessions_by_month': sessions_by_month(
                 df_domain,
                 site=label,
@@ -146,8 +154,19 @@ def main() -> None:
                 end_month=months[-1]
             ),
         }
+    comparison = {
+        'calculator_name': results.get('calc', {}).get('calculator_name', ''),
+        'conversion_by_calc': conversion_by_calculator(results),
+        'sessions_by_calc_month': sessions_by_calculator_by_month(results),
+        'downloads_by_calc': downloads_by_calculator(results),
+    }
 
-    export_to_excel(results, df, output_path=args.output)
+    export_to_excel(
+        results,
+        df,
+        comparison=comparison,
+        output_path=args.output
+    )
 
 
 if __name__ == '__main__':
