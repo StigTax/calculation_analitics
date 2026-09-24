@@ -10,7 +10,7 @@ from src.constants import (
     USER_COL,
 )
 
-from src.utilits import exclude_by_column
+from src.analytics.utils import exclude_by_column
 
 
 def load_excluded_users(path: str) -> list[str]:

@@ -15,8 +15,8 @@ from src.constants import (
     DEFAULT_MONTHS_RANGE,
     TOP_PERIOD_DAYS
 )
-from src.loader import load_clean_data
-from src.utilits import (
+from src.analytics.loader import load_clean_data
+from src.analytics.utils import (
     filter_by_domain,
     add_identity_column,
     add_session_id,
@@ -30,10 +30,9 @@ from src.utilits import (
     filter_by_month_list,
     get_calculator_names,
     _add_readable_site_to_calculator,
-    get_month_columns,
-
 )
-from src.report import export_to_excel
+from src.reports.report import export_to_excel
+from src.common.utils import get_month_columns
 
 
 def top_downloaders(
@@ -193,6 +192,60 @@ def downloads_by_calculator(results: dict) -> pd.DataFrame:
     return _add_readable_site_to_calculator(combined)
 
 
+def calculator_downloads_by_month(
+    df: pd.DataFrame,
+    site: str | None = None,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    months_back: int = DEFAULT_MONTHS_RANGE,
+) -> pd.DataFrame:
+    """
+    Скачивания по месяцам, в разрезе калькулятора. Как и
+    calculator_downloads — сырые события ACTION_DOWNLOAD без привязки
+    к сессиям (5 скачиваний одного юзера за визит = 5, не 1). В отличие
+    от conversion_by_month, сессии здесь не нужны вообще — считаем
+    события напрямую, никакого add_session_id.
+    """
+    months = get_month_range(df, start_month, end_month, months_back)
+    df = filter_by_month_list(df, months)
+    df = add_month_column(df)
+    downloads = filter_by_action(df, ACTION_DOWNLOAD)
+
+    result = (
+        downloads.groupby(['Калькулятор', 'Месяц'])
+        .size()
+        .reset_index(name='Количество скачиваний')
+    )
+    return add_site_column(result, site)
+
+
+def calculator_downloads_by_month_wide(
+    long_df: pd.DataFrame,
+    months: list[str],
+) -> pd.DataFrame:
+    """
+    Широкая проекция для xlsx-графика (см. conversion_by_month_wide —
+    тот же приём). В отличие от конверсии, здесь 0 — легитимное
+    значение ('скачиваний не было'), а не 'не считалось' — поэтому
+    fill_value=0, а не оставляем NaN.
+    """
+    site = (
+        long_df['Сайт'].iloc[0]
+        if 'Сайт' in long_df.columns and not long_df.empty
+        else None
+    )
+    wide = (
+        long_df.pivot(
+            index='Калькулятор',
+            columns='Месяц',
+            values='Количество скачиваний',
+        )
+        .reindex(columns=months, fill_value=0)
+        .reset_index()
+    )
+    return add_site_column(wide, site)
+
+
 def conversion_by_calculator(results: dict) -> pd.DataFrame:
     """
     Конверсия по калькулятору, в разбивке по сайтам. Сборка, не новый
@@ -216,6 +269,94 @@ def conversion_by_calculator(results: dict) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     return _add_readable_site_to_calculator(combined)
+
+
+def conversion_by_month_wide(
+    long_df: pd.DataFrame,
+    months: list[str],
+) -> pd.DataFrame:
+    """
+    Разворачивает conversion_by_month() (длинный формат) в те же
+    'месяцы колонками', что и sessions_by_month — чтобы переиспользовать
+    существующий line-chart builder и heatmap-фолбэк в report.py.
+
+    Пропуск (месяц, калькулятор) остаётся NaN, а не 0: если в этом
+    месяце у калькулятора вообще не было сессий, это "данных нет",
+    а не "конверсия 0%" — путать графически нельзя.
+    """
+    site = (
+        long_df['Сайт'].iloc[0]
+        if 'Сайт' in long_df.columns and not long_df.empty
+        else None
+    )
+    wide = (
+        long_df.pivot(
+            index='Калькулятор',
+            columns='Месяц',
+            values='Конверсия, %'
+        )
+        .reindex(columns=months)
+        .reset_index()
+    )
+    return add_site_column(wide, site)
+
+
+def conversion_by_month(
+    df: pd.DataFrame,
+    site: str | None = None,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    months_back: int = DEFAULT_MONTHS_RANGE,
+) -> pd.DataFrame:
+    """
+    Конверсия (сессии с заходом И скачиванием / сессии с заходом),
+    по месяцам, в разрезе калькулятора. В отличие от conversion_rate
+    (одно число за весь период) — динамика месяц к месяцу.
+
+    Месяц сессии определяется по первому действию в ней (как в
+    build_sessions) — сессия, стартовавшая 31-го числа поздно вечером
+    и перевалившая за полночь, целиком относится к месяцу старта.
+    """
+    months = get_month_range(df, start_month, end_month, months_back)
+    df = filter_by_month_list(df, months)
+    df = add_session_id(df)
+    df = add_month_column(df)
+
+    # Месяц сессии = месяц её первого действия, не любого произвольного
+    session_month = (
+        df.sort_values('Время отчета')
+        .groupby('session_id')['Месяц']
+        .first()
+    )
+
+    # Присутствие каждого типа действия в сессии
+    session_actions = (
+        df.groupby(['session_id', 'Действие'])
+        .size()
+        .unstack('Действие', fill_value=0)
+    )
+    has_visit = session_actions.get(ACTION_VISIT, 0) > 0
+    has_download = session_actions.get(ACTION_DOWNLOAD, 0) > 0
+
+    sessions = pd.DataFrame({
+        'Месяц': session_month,
+        'Калькулятор': df.groupby('session_id')['Калькулятор'].first(),
+        'has_visit': has_visit,
+        'converted': has_visit & has_download,
+    }).reset_index(drop=True)
+
+    result = (
+        sessions.groupby(['Калькулятор', 'Месяц'])
+        .agg(Заходы=('has_visit', 'sum'), Скачивания=('converted', 'sum'))
+        .reset_index()
+    )
+    result['Конверсия, %'] = np.where(
+        result['Заходы'] > 0,
+        (result['Скачивания'] / result['Заходы'] * 100).round(1),
+        np.nan,
+    )
+
+    return add_site_column(result, site)
 
 
 def sessions_by_calculator_by_month(results: dict) -> pd.DataFrame:
@@ -390,6 +531,15 @@ if __name__ == '__main__':
     results = {}
     for label, domain in DOMAINS.items():
         df_domain = filter_by_domain(df, domain=domain)
+        conv_by_month_long = conversion_by_month(
+            df_domain,
+            site=label,
+            **PERIOD_KWARGS
+        )
+        downloads_by_month_long = calculator_downloads_by_month(
+            df_domain, site=label, **PERIOD_KWARGS
+        )
+        months = get_month_range(df_domain, **PERIOD_KWARGS)
         results[label] = {
             'calculator_name': get_calculator_names(df_domain),
             'top': top_downloaders(
@@ -401,9 +551,19 @@ if __name__ == '__main__':
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),
+            'conversion_by_month': conversion_by_month_wide(
+                conv_by_month_long,
+                months
+            ),
             'calculator_downloads': calculator_downloads(
                 df_domain,
                 site=label
+            ),
+            'calculator_downloads_by_month': (
+                calculator_downloads_by_month_wide(
+                    downloads_by_month_long,
+                    months
+                )
             ),
             'sessions_by_month': sessions_by_month(
                 df_domain,

@@ -8,26 +8,30 @@ from src.constants import (
     DEFAULT_MONTHS_RANGE,
     TOP_PERIOD_DAYS
 )
-from src.loader import load_clean_data
-from src.utilits import (
+from src.analytics.loader import load_clean_data
+from src.analytics.utils import (
     filter_by_domain,
     filter_by_month_list,
     get_month_range,
     get_last_n_days_range,
     get_calculator_names
 )
-from src.aggregate import (
+from src.analytics.aggregate import (
     top_downloaders,
     uniq_users_by_region,
     conversion_rate,
+    conversion_by_month,
+    conversion_by_month_wide,
     sessions_by_month,
     sessions_by_month_and_district,
     conversion_by_calculator,
     sessions_by_calculator_by_month,
     calculator_downloads,
+    calculator_downloads_by_month,
+    calculator_downloads_by_month_wide,
     downloads_by_calculator,
 )
-from src.report import export_to_excel
+from src.reports.report import export_to_excel
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,35 +127,46 @@ def main() -> None:
         df_domain_full = filter_by_domain(df_full, domain=domain)
         df_domain = filter_by_domain(df, domain=domain)
 
+        conv_by_month_long = conversion_by_month(
+            df_domain, site=label,
+            start_month=months[0], end_month=months[-1],
+        )
+        downloads_by_month_long = calculator_downloads_by_month(
+            df_domain, site=label,
+            start_month=months[0], end_month=months[-1],
+        )
+
         results[label] = {
             'calculator_name': get_calculator_names(df_domain_full),
             'top': top_downloaders(
-                df_domain_full,
-                site=label
+                df_domain_full, site=label
             ) if domain == MAIN_DOMAIN else None,
             'top_30d': top_downloaders(
-                df_domain_full,
-                site=label,
-                date_from=date_from,
-                date_to=date_to,
+                df_domain_full, site=label,
+                date_from=date_from, date_to=date_to,
             ) if domain == MAIN_DOMAIN else None,
             'regions': uniq_users_by_region(df_domain, site=label),
             'conversion': conversion_rate(df_domain, site=label),
+            'conversion_by_month': conversion_by_month_wide(
+                conv_by_month_long, months
+            ),
             'calculator_downloads': calculator_downloads(
                 df_domain,
                 site=label
             ),
+            'calculator_downloads_by_month': (
+                calculator_downloads_by_month_wide(
+                    downloads_by_month_long,
+                    months
+                )
+            ),
             'sessions_by_month': sessions_by_month(
-                df_domain,
-                site=label,
-                start_month=months[0],
-                end_month=months[-1]
+                df_domain, site=label,
+                start_month=months[0], end_month=months[-1],
             ),
             'sessions_by_month_district': sessions_by_month_and_district(
-                df_domain,
-                site=label,
-                start_month=months[0],
-                end_month=months[-1]
+                df_domain, site=label,
+                start_month=months[0], end_month=months[-1],
             ),
         }
     comparison = {

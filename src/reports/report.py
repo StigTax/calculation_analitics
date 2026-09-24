@@ -1,21 +1,26 @@
-import xlsxwriter
-import pandas as pd
-
+# src/report/report.py
 import os
 
-from src.constants import (
-    ACTION_VISIT,
-    ACTION_DOWNLOAD,
-    USER_COL,
-    CHART_HEIGHT_ROWS,
-    GAP_ROWS,
-    SITE_LABELS
+import pandas as pd
+import xlsxwriter
+
+from src.constants import CHART_HEIGHT_ROWS, GAP_ROWS, SITE_LABELS
+from src.common.utils import get_month_columns
+from src.reports.utils import (
+    build_output_filename, get_report_date, _with_calc
 )
-from src.utilits import (
-    build_output_filename,
-    get_report_date,
-    _with_calc,
-    get_month_columns,
+from src.reports.charts import (
+    apply_heatmap,
+    top_chart,
+    regions_chart,
+    conversion_chart,
+    conversion_by_month_chart,
+    downloads_by_month_chart,
+    sessions_by_month_chart,
+    sessions_district_chart,
+    conversion_by_calculator_chart,
+    sessions_by_calculator_chart,
+    downloads_by_calculator_chart,
 )
 
 
@@ -298,12 +303,23 @@ def export_legend(workbook) -> None:
             'чтобы не завышать показатель.'
         ),
         (
+            'Конверсия по месяцам',
+            'То же самое, что "Конверсия", но в динамике по месяцам за '
+            'последние 6 месяцев — в отличие от "Конверсия" (за весь период '
+            'данных), эти два числа не обязаны совпадать в сумме.'
+        ),
+        (
             'Количество скачиваний по калькулятору',
             'Общее число скачиваний отчёта — считается каждое скачивание, '
             'а не человек. Если один пользователь скачал отчёт 5 раз за '
             'визит — здесь будет 5. Это другая единица измерения, чем в '
             '"Конверсии": там считаются посещения (сессии), а не отдельные '
             'скачивания.'
+        ),
+        (
+            'Скачивания по месяцам',
+            'То же самое, что "Количество скачиваний по калькулятору", но в '
+            'динамике по месяцам за последние 6 месяцев.'
         ),
         (
             'Сессии по месяцам',
@@ -347,324 +363,49 @@ def export_legend(workbook) -> None:
     write_diagram(row)
 
 
-# --- построители графиков под конкретные таблицы ---
+# --- конфиг блоков листа: (ключ в tables, заголовок, chart_builder) ---
+# Порядок в списке = порядок блоков на листе сверху вниз.
+# Добавить новую метрику в отчёт = добавить одну строку сюда,
+# а не искать место для вставки write_table_block вручную.
+SITE_BLOCKS = [
+    ('regions', 'Активности по региону', regions_chart),
+    ('conversion', 'Конверсия', conversion_chart),
+    ('conversion_by_month', 'Конверсия по месяцам', conversion_by_month_chart),
+    (
+        'calculator_downloads_by_month',
+        'Скачивания по месяцам',
+        downloads_by_month_chart,
+    ),
+    ('sessions_by_month', 'Сессии по месяцам', sessions_by_month_chart),
+    (
+        'sessions_by_month_district',
+        'Сессии по месяцам и округам',
+        sessions_district_chart,
+    ),
+]
 
-def top_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    # горизонтальные — читаемее для длинных логинов
-    chart = workbook.add_chart({'type': 'bar'})
-    name_col = df.columns.get_loc(USER_COL)
-    value_col = df.columns.get_loc('Количество скачиваний')
-    chart.add_series({
-        'categories': [sheet_name, data_start, name_col, data_end, name_col],
-        'values': [sheet_name, data_start, value_col, data_end, value_col],
-    })
-    chart.set_title({
-        'name': _with_calc(
-            'Топ пользователей по скачиваниям',
-            calc_name,
-            site_label,
-            report_date,
-        )
-    })
-    chart.set_legend({'none': True})
-    # данные уже отсортированы по убыванию (сверху вниз в таблице),
-    # но Excel рисует bar-график категориями снизу вверх по умолчанию —
-    # разворачиваем ось, чтобы наибольшее значение было сверху
-    chart.set_y_axis({'reverse': True})
-    return chart
+TOP_BLOCKS = [
+    ('top', 'Топ пользователей'),
+    ('top_30d', 'Топ-5 за последние 30 дней'),
+]
 
-
-def regions_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    chart = workbook.add_chart({'type': 'bar'})
-    name_col = df.columns.get_loc('Округ')
-    value_col = df.columns.get_loc('Уникальных активностей по региону')
-    chart.add_series({
-        'categories': [sheet_name, data_start, name_col, data_end, name_col],
-        'values': [sheet_name, data_start, value_col, data_end, value_col],
-    })
-    chart.set_title({
-        'name': _with_calc(
-            'Активности по федеральным округам',
-            calc_name,
-            site_label,
-            report_date,
-        )
-    })
-    chart.set_legend({'none': True})
-    chart.set_y_axis({'reverse': True})
-    return chart
-
-
-def conversion_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    chart = workbook.add_chart({'type': 'column'})
-    calc_col = df.columns.get_loc('Калькулятор')
-    for metric in [ACTION_VISIT, ACTION_DOWNLOAD]:
-        col = df.columns.get_loc(metric)
-        chart.add_series({
-            'name': metric,
-            'categories': [
-                sheet_name,
-                data_start,
-                calc_col,
-                data_end,
-                calc_col
-            ],
-            'values': [sheet_name, data_start, col, data_end, col],
-        })
-    chart.set_title({
-        'name': _with_calc(
-            'Заходы vs скачивания',
-            calc_name,
-            site_label,
-            report_date,
-        )
-    })
-    return chart
-
-
-def sessions_by_month_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    chart = workbook.add_chart({'type': 'line'})
-    month_cols = get_month_columns(df)
-    calc_col = df.columns.get_loc('Калькулятор')
-    first_col = df.columns.get_loc(month_cols[0])
-    last_col = df.columns.get_loc(month_cols[-1])
-
-    for row in range(data_start, data_end + 1):
-        chart.add_series({
-            'name': [sheet_name, row, calc_col],
-            'categories': [
-                sheet_name,
-                header_row,
-                first_col,
-                header_row,
-                last_col
-            ],
-            'values': [sheet_name, row, first_col, row, last_col],
-        })
-    chart.set_title({'name': _with_calc(
-        'Сессии по месяцам',
-        calc_name,
-        site_label,
-        report_date
-    )})
-    chart.set_x_axis({'name': 'Месяц'})
-    return chart
-
-
-def sessions_district_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    """
-    Bar-график для 1-3 периодов — наглядное сравнение по округам.
-    Для 4+ месяцев возвращает None: report будет строить по этой
-    таблице heatmap вместо графика (см. write_table_block).
-    """
-    month_cols = get_month_columns(df)
-    if len(month_cols) > 3:
-        return None
-
-    chart = workbook.add_chart({'type': 'bar'})
-    district_col = df.columns.get_loc('Округ')
-
-    for month in month_cols:
-        col = df.columns.get_loc(month)
-        chart.add_series({
-            'name': month,
-            'categories': [
-                sheet_name,
-                data_start,
-                district_col,
-                data_end,
-                district_col
-            ],
-            'values': [sheet_name, data_start, col, data_end, col],
-        })
-
-    chart.set_title(
-        {
-            'name': _with_calc(
-                'Сессии по округам',
-                calc_name,
-                site_label,
-                report_date
-            )
-        }
-    )
-    chart.set_x_axis({'name': 'Количество сессий'})
-    return chart
-
-
-def conversion_by_calculator_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    """
-    Группированная колонка для сравнительной таблицы конверсии:
-    категории — уже склеенная 'Калькулятор — Сайт' (готовит
-    aggregate._add_readable_site_to_calculator), два ряда — заходы и
-    скачивания. calc_name не используется: сравнение не привязано
-    к одному калькулятору по определению этой таблицы.
-    """
-    chart = workbook.add_chart({'type': 'column'})
-    calc_col = df.columns.get_loc('Калькулятор')
-    for metric in [ACTION_VISIT, ACTION_DOWNLOAD]:
-        col = df.columns.get_loc(metric)
-        chart.add_series({
-            'name': metric,
-            'categories': [
-                sheet_name, data_start, calc_col, data_end, calc_col
-            ],
-            'values': [sheet_name, data_start, col, data_end, col],
-        })
-    chart.set_title({
-        'name': _with_calc(
-            'Сравнение конверсии между сайтами',
-            calc_name, site_label, report_date
-        )
-    })
-    return chart
-
-
-def sessions_by_calculator_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    """
-    Группированная колонка для сравнительной таблицы сессий по месяцам:
-    категории — месяцы, один ряд — одна строка таблицы ('Калькулятор —
-    Сайт'). В отличие от sessions_by_month_chart (line, один сайт за раз)
-    здесь осознанно column: сравниваем сайты между собой внутри каждого
-    месяца, пересекающиеся линии тут читались бы хуже группировки.
-    """
-    chart = workbook.add_chart({'type': 'column'})
-    month_cols = get_month_columns(df)
-    calc_col = df.columns.get_loc('Калькулятор')
-    first_col = df.columns.get_loc(month_cols[0])
-    last_col = df.columns.get_loc(month_cols[-1])
-
-    for row in range(data_start, data_end + 1):
-        chart.add_series({
-            'name': [sheet_name, row, calc_col],
-            'categories': [
-                sheet_name, header_row, first_col, header_row, last_col
-            ],
-            'values': [sheet_name, row, first_col, row, last_col],
-        })
-    chart.set_title({
-        'name': _with_calc(
-            'Динамика количества сессий по сайтам',
-            calc_name, site_label, report_date
-        )
-    })
-    return chart
-
-
-def downloads_by_calculator_chart(
-    workbook,
-    sheet_name,
-    df,
-    header_row,
-    data_start,
-    data_end,
-    calc_name='',
-    site_label='',
-    report_date='',
-):
-    """
-    Одна колонка на категорию (без группировки, в отличие от
-    conversion_by_calculator_chart) — тут всего одна метрика,
-    а не пара визит/скачивание.
-    """
-    chart = workbook.add_chart({'type': 'column'})
-    calc_col = df.columns.get_loc('Калькулятор')
-    value_col = df.columns.get_loc('Количество скачиваний')
-    chart.add_series({
-        'categories': [sheet_name, data_start, calc_col, data_end, calc_col],
-        'values': [sheet_name, data_start, value_col, data_end, value_col],
-    })
-    chart.set_title({
-        'name': _with_calc(
-            'Сравнение количества скачиваний отчетов',
-            calc_name, site_label, report_date,
-        )
-    })
-    chart.set_legend({'none': True})
-    # chart.set_y_axis({'name': 'Скачиваний'})
-    # chart.set_x_axis({'name': 'Сайт'})
-    return chart
-
-
-def apply_heatmap(worksheet, data_start, data_end, first_col, last_col):
-    """
-    Цветовая шкала на диапазон месячных колонок — альтернатива
-    графику при 4+ периодах.
-    """
-    worksheet.conditional_format(
-        data_start, first_col, data_end, last_col,
-        {'type': '3_color_scale'}
-    )
+COMPARISON_BLOCKS = [
+    (
+        'conversion_by_calc',
+        'Сравнение конверсии между сайтами',
+        conversion_by_calculator_chart,
+    ),
+    (
+        'sessions_by_calc_month',
+        'Динамика количества сессий по сайтам',
+        sessions_by_calculator_chart,
+    ),
+    (
+        'downloads_by_calc',
+        'Сравнение количества скачиваний отчетов',
+        downloads_by_calculator_chart,
+    ),
+]
 
 
 def export_site(
@@ -684,96 +425,32 @@ def export_site(
     row = 0
 
     if tables.get('top') is not None:
-        row = write_table_block(
-            workbook, worksheet, tables['top'],
-            _with_calc(
-                'Топ пользователей',
-                calc_name, site_label,
-                report_date
-            ),
-            row, top_chart, calc_name, site_label, report_date,
-        )
-        row = write_table_block(
-            workbook, worksheet, tables['top_30d'],
-            _with_calc(
-                'Топ-5 за последние 30 дней',
-                calc_name,
-                site_label,
-                report_date
-            ),
-            row, top_chart, calc_name, site_label, report_date,
-        )
+        for key, title in TOP_BLOCKS:
+            row = write_table_block(
+                workbook, worksheet, tables[key],
+                _with_calc(title, calc_name, site_label, report_date),
+                row, top_chart, calc_name, site_label, report_date,
+            )
 
-    row = write_table_block(
-        workbook, worksheet, tables['regions'],
-        _with_calc(
-            'Активности по региону',
-            calc_name,
-            site_label,
-            report_date
-        ),
-        row, regions_chart, calc_name, site_label, report_date,
-    )
-    row = write_table_block(
-        workbook, worksheet, tables['conversion'],
-        _with_calc('Конверсия', calc_name, site_label, report_date),
-        row, conversion_chart, calc_name, site_label, report_date,
-    )
-    row = write_table_block(
-        workbook, worksheet, tables['sessions_by_month'],
-        _with_calc('Сессии по месяцам', calc_name, site_label, report_date),
-        row, sessions_by_month_chart, calc_name, site_label, report_date,
-    )
-    write_table_block(
-        workbook, worksheet, tables['sessions_by_month_district'],
-        _with_calc(
-            'Сессии по месяцам и округам',
-            calc_name,
-            site_label,
-            report_date
-        ),
-        row, sessions_district_chart, calc_name, site_label, report_date,
-    )
+    for key, title, chart_fn in SITE_BLOCKS:
+        row = write_table_block(
+            workbook, worksheet, tables[key],
+            _with_calc(title, calc_name, site_label, report_date),
+            row, chart_fn, calc_name, site_label, report_date,
+        )
 
 
 def export_comparison(workbook, tables: dict, report_date: str = '') -> None:
     worksheet = workbook.add_worksheet('Сравнение')
     calc_name = tables.get('calculator_name', '')
     row = 0
-    row = write_table_block(
-        workbook,
-        worksheet,
-        tables.get('conversion_by_calc'),
-        _with_calc(
-            'Сравнение конверсии между сайтами',
-            calc_name,
-            report_date=report_date
-        ),
-        row,
-        conversion_by_calculator_chart,
-        calc_name, '', report_date,
-    )
-    row = write_table_block(
-        workbook,
-        worksheet,
-        tables.get('sessions_by_calc_month'),
-        _with_calc(
-            'Динамика количества сессий по сайтам',
-            calc_name, report_date=report_date,
-        ),
-        row,
-        sessions_by_calculator_chart,
-        calc_name, '', report_date,
-    )
-    write_table_block(
-        workbook, worksheet, tables.get('downloads_by_calc'),
-        _with_calc(
-            'Сравнение количества скачиваний отчетов',
-            calc_name,
-            report_date=report_date
-        ),
-        row, downloads_by_calculator_chart, calc_name, '', report_date,
-    )
+
+    for key, title, chart_fn in COMPARISON_BLOCKS:
+        row = write_table_block(
+            workbook, worksheet, tables.get(key),
+            _with_calc(title, calc_name, report_date=report_date),
+            row, chart_fn, calc_name, '', report_date,
+        )
 
 
 def export_to_excel(

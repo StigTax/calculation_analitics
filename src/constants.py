@@ -14,6 +14,7 @@ SITE_LABELS = {
     'hub': 'HUB',
     'vetonit': 'Vetonit',
 }
+
 CALCULATOR_DISPLAY_OVERRIDES = {
     'Калькулятор СФТК': 'Калькулятор СФТК (Розничный)',
 }
